@@ -95,7 +95,12 @@ I18N = {
         "phase_cut": "Kesme",
         "saved_to": "Kaydedildi",
         "temp_deleted": "Geçici dosya silindi.",
+        "eta_remaining": " · kalan ~{}",
         "copy_note": "Not: copy modu yeniden kodlamaz; bazı videolarda ilk saniyelerde donma veya küçük zaman kayması normaldir.",
+        "timeline_hint": "Süre bilgisi için Formatları Getir'e bas",
+        "timeline_drag": "Başlangıç / Bitiş tutamaçlarını sürükle",
+        "range_label": "Seçili aralık",
+        "full_video": "Tüm video",
     },
     "en": {
         "app_title": "yt-dlp GUI",
@@ -160,7 +165,12 @@ I18N = {
         "phase_cut": "Cut",
         "saved_to": "Saved to",
         "temp_deleted": "Temporary file deleted.",
+        "eta_remaining": " · ~{} left",
         "copy_note": "Note: copy mode does not re-encode; brief first-second freeze or small timing drift can happen on some videos.",
+        "timeline_hint": "Fetch formats first to enable the timeline",
+        "timeline_drag": "Drag Start / End handles",
+        "range_label": "Selected range",
+        "full_video": "Full video",
     },
 }
 
@@ -229,15 +239,22 @@ def ffmpeg_time_to_seconds(value):
     return int(match.group(1)) * 3600 + int(match.group(2)) * 60 + float(match.group(3))
 
 
-def short_duration(seconds):
+def short_duration(seconds, lang="tr"):
     seconds = max(0, int(round(float(seconds))))
     minutes, sec = divmod(seconds, 60)
     hours, minutes = divmod(minutes, 60)
-    if hours:
-        return f"{hours} sa {minutes:02d} dk"
-    if minutes:
-        return f"{minutes} dk {sec:02d} sn"
-    return f"{sec} sn"
+    if lang == "en":
+        if hours:
+            return f"{hours}h {minutes:02d}m"
+        if minutes:
+            return f"{minutes}m {sec:02d}s"
+        return f"{sec}s"
+    else:
+        if hours:
+            return f"{hours} sa {minutes:02d} dk"
+        if minutes:
+            return f"{minutes} dk {sec:02d} sn"
+        return f"{sec} sn"
 
 
 def normalize_eta(value):
@@ -257,6 +274,176 @@ def normalize_eta(value):
     return short_duration(seconds)
 
 
+def _fmt_time_compact(t):
+    """'00:27:50' → '27:50' (baştaki 00: varsa kaldır)."""
+    if t and t.startswith("00:"):
+        return t[3:]
+    return t or ""
+
+
+class TimelineWidget(tk.Canvas):
+    """
+    Çift tutamaçlı video timeline.
+    Başlangıç (yeşil) ve Bitiş (kırmızı) tutamaçları sürüklenebilir.
+    Dışarıdan set_duration(), set_range(), get_range() ile kontrol edilir.
+    on_change(start_sec, end_sec) callback'i her değişimde çağrılır.
+    """
+    H          = 44          # widget yüksekliği
+    TRACK_H    = 8           # ince şerit yüksekliği
+    HANDLE_R   = 9           # tutamaç yarıçapı
+    PAD        = 14          # sol/sağ boşluk (tutamaç taşması için)
+
+    C_TRACK    = "#454b5f"
+    C_RANGE    = "#4f8cff"
+    C_START    = "#54c58a"
+    C_END      = "#ff6b6b"
+    C_LABEL    = "#a6adbb"
+    C_HINT     = "#5a6070"
+
+    def __init__(self, parent, on_change=None, **kwargs):
+        kwargs.setdefault("bg", "#20222b")
+        kwargs.setdefault("highlightthickness", 0)
+        kwargs.setdefault("height", self.H)
+        super().__init__(parent, **kwargs)
+        self._duration  = 0.0
+        self._start_sec = 0.0
+        self._end_sec   = 0.0
+        self._dragging  = None   # "start" | "end" | None
+        self._on_change = on_change
+
+        self.bind("<Configure>",      self._redraw)
+        self.bind("<ButtonPress-1>",  self._on_press)
+        self.bind("<B1-Motion>",      self._on_drag)
+        self.bind("<ButtonRelease-1>",self._on_release)
+
+    # ── Public API ───────────────────────────────────────────
+    def set_duration(self, seconds):
+        self._duration  = max(0.0, float(seconds))
+        self._start_sec = 0.0
+        self._end_sec   = self._duration
+        self._redraw()
+
+    def set_range(self, start, end):
+        if self._duration <= 0:
+            return
+        self._start_sec = max(0.0, min(float(start or 0),   self._duration))
+        self._end_sec   = max(0.0, min(float(end   or self._duration), self._duration))
+        self._redraw()
+
+    def get_range(self):
+        return self._start_sec, self._end_sec
+
+    # ── Koordinat yardımcıları ───────────────────────────────
+    def _track_x(self):
+        """Track'in başlangıç/bitiş x koordinatları."""
+        w = self.winfo_width()
+        return self.PAD, w - self.PAD
+
+    def _sec_to_x(self, sec):
+        x0, x1 = self._track_x()
+        if self._duration <= 0:
+            return x0
+        return x0 + (sec / self._duration) * (x1 - x0)
+
+    def _x_to_sec(self, x):
+        x0, x1 = self._track_x()
+        if x1 <= x0:
+            return 0.0
+        return max(0.0, min(1.0, (x - x0) / (x1 - x0))) * self._duration
+
+    def _track_y(self):
+        return self.H // 2
+
+    # ── Çizim ────────────────────────────────────────────────
+    def _redraw(self, _event=None):
+        self.delete("all")
+        w = self.winfo_width()
+        if w < 10:
+            return
+        ty  = self._track_y()
+        x0, x1 = self._track_x()
+
+        # Arka plan track
+        self.create_rectangle(x0, ty - self.TRACK_H//2,
+                               x1, ty + self.TRACK_H//2,
+                               fill=self.C_TRACK, outline="", tags="track")
+
+        if self._duration <= 0:
+            # Henüz süre yok — ipucu yaz
+            self.create_text(w // 2, ty, text="—", fill=self.C_HINT,
+                             font=("Segoe UI", 9), tags="hint")
+            return
+
+        sx = self._sec_to_x(self._start_sec)
+        ex = self._sec_to_x(self._end_sec)
+
+        # Seçili aralık
+        self.create_rectangle(sx, ty - self.TRACK_H//2,
+                               ex, ty + self.TRACK_H//2,
+                               fill=self.C_RANGE, outline="", tags="range")
+
+        # Başlangıç tutamacı
+        self._draw_handle(sx, ty, self.C_START, "start")
+        # Bitiş tutamacı
+        self._draw_handle(ex, ty, self.C_END,   "end")
+
+        # Zaman etiketleri — tutamaçların altına
+        self.create_text(sx, ty + self.HANDLE_R + 8,
+                         text=seconds_to_time(self._start_sec),
+                         fill=self.C_START, font=("Segoe UI", 8), tags="lbl_start")
+        self.create_text(ex, ty + self.HANDLE_R + 8,
+                         text=seconds_to_time(self._end_sec),
+                         fill=self.C_END,   font=("Segoe UI", 8), tags="lbl_end")
+
+        # Toplam süre sağ alt
+        self.create_text(x1, ty + self.HANDLE_R + 8,
+                         text=seconds_to_time(self._duration),
+                         fill=self.C_HINT, font=("Segoe UI", 8),
+                         anchor="e", tags="lbl_dur")
+
+    def _draw_handle(self, x, y, color, tag):
+        r = self.HANDLE_R
+        self.create_oval(x - r, y - r, x + r, y + r,
+                         fill=color, outline=BG, width=2, tags=tag)
+
+    # ── Mouse eventleri ──────────────────────────────────────
+    def _nearest_handle(self, x):
+        """x'e en yakın tutamacı döndür."""
+        if self._duration <= 0:
+            return None
+        sx = self._sec_to_x(self._start_sec)
+        ex = self._sec_to_x(self._end_sec)
+        ds = abs(x - sx)
+        de = abs(x - ex)
+        threshold = self.HANDLE_R + 6
+        if ds < threshold and ds <= de:
+            return "start"
+        if de < threshold:
+            return "end"
+        return None
+
+    def _on_press(self, e):
+        self._dragging = self._nearest_handle(e.x)
+        if self._dragging:
+            self.config(cursor="sb_h_double_arrow")
+
+    def _on_drag(self, e):
+        if not self._dragging or self._duration <= 0:
+            return
+        sec = self._x_to_sec(e.x)
+        if self._dragging == "start":
+            self._start_sec = max(0.0, min(sec, self._end_sec - 0.5))
+        else:
+            self._end_sec = min(self._duration, max(sec, self._start_sec + 0.5))
+        self._redraw()
+        if self._on_change:
+            self._on_change(self._start_sec, self._end_sec)
+
+    def _on_release(self, _e):
+        self._dragging = None
+        self.config(cursor="")
+
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -267,6 +454,8 @@ class App(tk.Tk):
         self._buttons = []
         self._radios = []
         self._phase_weights = (1.0, 0.0)
+        self._duration = 0.0          # video toplam süresi (saniye)
+        self._tl_updating = False     # döngüsel güncellemeyi engelle
         self._build()
         self._apply_language()
         self._fit_to_screen()
@@ -393,10 +582,27 @@ class App(tk.Tk):
         self.output_menu["menu"].configure(bg=SURF, fg=TEXT, activebackground=ACCENT, activeforeground="#ffffff", font=FONT, bd=0)
         self.output_menu.pack(fill="x", pady=(2, 0))
 
+        # ── Timeline ──────────────────────────────────────────
+        tl_frame = tk.Frame(frame, bg=SURF, highlightbackground=BORDER, highlightthickness=1)
+        tl_frame.pack(fill="x", pady=(4, 2))
+        self.timeline = TimelineWidget(tl_frame, on_change=self._on_timeline_change)
+        self.timeline.pack(fill="x", padx=6, pady=(4, 6))
+
+        tl_info = tk.Frame(frame, bg=BG)
+        tl_info.pack(fill="x", pady=(0, 8))
+        self.tl_hint_lbl = tk.Label(tl_info, font=("Segoe UI", 8), bg=BG, fg=DIM, anchor="w")
+        self.tl_hint_lbl.pack(side="left")
+        self.tl_range_lbl = tk.Label(tl_info, font=("Segoe UI", 8), bg=BG, fg=ACCENT, anchor="e")
+        self.tl_range_lbl.pack(side="right")
+
+        # Entry değişince timeline'ı güncelle
+        self.start_var.trace_add("write", lambda *_: self._on_entry_change())
+        self.end_var.trace_add("write",   lambda *_: self._on_entry_change())
+
         self._lbl(frame, "cut_method")
         mode_row = tk.Frame(frame, bg=BG)
         mode_row.pack(fill="x", pady=(2, 6))
-        self.mode = tk.StringVar(value="reencode")
+        self.mode = tk.StringVar(value="direct")
         for value, key in (("direct", "direct"), ("post", "post"), ("reencode", "reencode")):
             self._radio(mode_row, self.mode, value, key).pack(anchor="w", pady=1)
 
@@ -404,15 +610,24 @@ class App(tk.Tk):
         codec_row = tk.Frame(frame, bg=BG)
         codec_row.pack(fill="x", pady=(2, 4))
         self.codec = tk.StringVar(value="h264")
+        self._codec_radios = []
         for value, key in (("h264", "h264"), ("h265", "h265"), ("copy", "copy")):
-            self._radio(codec_row, self.codec, value, key).pack(side="left", padx=(0, 10))
+            rb = self._radio(codec_row, self.codec, value, key)
+            rb.pack(side="left", padx=(0, 10))
+            self._codec_radios.append(rb)
 
         self._lbl(frame, "reencode_size")
         size_row = tk.Frame(frame, bg=BG)
         size_row.pack(fill="x", pady=(2, 4))
         self.reencode_size = tk.StringVar(value="source")
+        self._size_radios = []
         for value, key in (("source", "size_source"), ("1080", "size_1080"), ("720", "size_720"), ("480", "size_480")):
-            self._radio(size_row, self.reencode_size, value, key).pack(side="left", padx=(0, 10))
+            rb = self._radio(size_row, self.reencode_size, value, key)
+            rb.pack(side="left", padx=(0, 10))
+            self._size_radios.append(rb)
+
+        # Mod değişince codec/size radio'larını etkinleştir/devre dışı bırak
+        self.mode.trace_add("write", lambda *_: self._update_reencode_widgets())
 
         self.tip_lbl = tk.Label(frame, text="", font=FNSM, bg=BG, fg=ORANGE, anchor="w")
         self.tip_lbl.pack(fill="x")
@@ -553,6 +768,13 @@ class App(tk.Tk):
         self._radios.append((radio, key))
         return radio
 
+    def _update_reencode_widgets(self):
+        state = "normal" if self.mode.get() == "reencode" else "disabled"
+        for rb in getattr(self, "_codec_radios", []):
+            rb.config(state=state)
+        for rb in getattr(self, "_size_radios", []):
+            rb.config(state=state)
+
     def _apply_language(self):
         self.title(self.t("app_title"))
         self.title_lbl.config(text=self.t("app_title"))
@@ -567,8 +789,14 @@ class App(tk.Tk):
         self.start_hint.config(text=self.t("time_hint"))
         self.end_hint.config(text=self.t("time_hint"))
         self.status.set(self.t("ready"))
+        if self._duration <= 0:
+            self.tl_hint_lbl.config(text=self.t("timeline_hint"))
+            self.tl_range_lbl.config(text="")
+        else:
+            self.tl_hint_lbl.config(text=self.t("timeline_drag"))
         self._format_changed()
         self._default_formats()
+        self._update_reencode_widgets()
 
     def _format_changed(self):
         text = self.t("twitter_tip") if self.output_format.get() == "mp4" else ""
@@ -611,6 +839,67 @@ class App(tk.Tk):
         except tk.TclError:
             pass
 
+    # ── Timeline ↔ Entry senkronizasyonu ────────────────────
+    def _on_timeline_change(self, start_sec, end_sec):
+        """Timeline sürüklenince entry'leri güncelle."""
+        if self._tl_updating:
+            return
+        self._tl_updating = True
+        try:
+            dur = self._duration
+            # Tüm video seçiliyse entry'leri temizle
+            if start_sec <= 0.1 and end_sec >= dur - 0.1:
+                self.start_var.set("")
+                self.end_var.set("")
+            else:
+                s = seconds_to_time(start_sec)
+                e = seconds_to_time(end_sec)
+                # HH:MM:SS → MM:SS formatına sadeleştir (saat 0 ise)
+                self.start_var.set(_fmt_time_compact(s))
+                self.end_var.set(_fmt_time_compact(e))
+            self._update_range_label(start_sec, end_sec)
+        finally:
+            self._tl_updating = False
+
+    def _on_entry_change(self):
+        """Entry değişince timeline'ı güncelle."""
+        if self._tl_updating or self._duration <= 0:
+            return
+        self._tl_updating = True
+        try:
+            try:
+                start_sec = time_to_seconds(self.start_var.get()) or 0.0
+            except ValueError:
+                start_sec = 0.0
+            try:
+                end_sec = time_to_seconds(self.end_var.get()) or self._duration
+            except ValueError:
+                end_sec = self._duration
+            self.timeline.set_range(start_sec, end_sec)
+            self._update_range_label(start_sec, end_sec)
+        finally:
+            self._tl_updating = False
+
+    def _update_range_label(self, start_sec, end_sec):
+        dur = self._duration
+        if dur <= 0:
+            return
+        if start_sec <= 0.1 and end_sec >= dur - 0.1:
+            self.tl_range_lbl.config(text=self.t("full_video"))
+        else:
+            length = max(0.0, end_sec - start_sec)
+            self.tl_range_lbl.config(
+                text=f"{self.t('range_label')}: {_fmt_time_compact(seconds_to_time(length))}")
+
+    def _set_duration(self, duration):
+        """Format çekildikten sonra süreyi ayarla ve timeline'ı aktifleştir."""
+        self._duration = duration
+        self.timeline.set_duration(duration)
+        self.start_var.set("")
+        self.end_var.set("")
+        self.tl_hint_lbl.config(text=self.t("timeline_drag"))
+        self.tl_range_lbl.config(text=self.t("full_video"))
+
     def _browse(self):
         directory = filedialog.askdirectory(initialdir=self.folder.get())
         if directory:
@@ -642,6 +931,22 @@ class App(tk.Tk):
             if result.returncode != 0:
                 raise RuntimeError(result.stderr.strip() or result.stdout.strip())
             self.after(0, self._fill_formats, result.stdout)
+
+            # Video süresini ayrı komutla çek
+            dur_result = subprocess.run(
+                [ytdlp, "--no-playlist", "--print", "duration", url],
+                capture_output=True, text=True,
+                encoding=CONSOLE_ENCODING, errors="replace",
+                creationflags=self._creation_flags(),
+            )
+            if dur_result.returncode == 0:
+                raw = dur_result.stdout.strip()
+                try:
+                    duration = float(raw)
+                    self.after(0, self._set_duration, duration)
+                except ValueError:
+                    pass
+
         except Exception as exc:
             self.after(0, self.fetch_status.config, {"text": f"{self.t('error')}: {exc}", "fg": RED})
         finally:
@@ -743,7 +1048,8 @@ class App(tk.Tk):
 
         has_cut = start_sec is not None or end_sec is not None
         is_audio_request = "|audio|" in fmt or self.output_format.get() in AUDIO_FORMATS
-        if ((has_cut and self.mode.get() in ("direct", "post", "reencode")) or is_audio_request) and not ffmpeg:
+        needs_ffmpeg = (has_cut and self.mode.get() in ("post", "reencode")) or is_audio_request
+        if needs_ffmpeg and not ffmpeg:
             messagebox.showerror(self.t("error"), self.t("ffmpeg_required"))
             return
 
@@ -864,7 +1170,7 @@ class App(tk.Tk):
                 total = phase_start + percent * phase_size
                 eta_match = re.search(r"\bETA\s+([0-9:]+|Unknown)", line, re.IGNORECASE)
                 eta = normalize_eta(eta_match.group(1)) if eta_match else ""
-                eta_text = f" · kalan ~{eta}" if eta else ""
+                eta_text = self.t("eta_remaining").format(eta) if eta else ""
                 self.after(0, self.progress.set, min(99, total))
                 self.after(0, self._set_status, f"{self.t('downloading')} %{percent:.1f}{eta_text}", ACCENT)
             destination = self._extract_destination(line, destination)
@@ -895,8 +1201,11 @@ class App(tk.Tk):
             input_seek = 0.0
             inner_seek = 0.0
 
+        ffmpeg_exe = find_exe("ffmpeg")
+        if not ffmpeg_exe:
+            raise RuntimeError("ffmpeg not found")
         cmd = [
-            ffmpeg := find_exe("ffmpeg"),
+            ffmpeg_exe,
             "-y",
             "-hide_banner",
             "-nostdin",
@@ -985,7 +1294,7 @@ class App(tk.Tk):
                     last_status = time.time()
                     elapsed = max(0.1, time.time() - started_at)
                     remaining = (elapsed / percent * (100 - percent)) if percent > 0 else 0
-                    eta = f" · kalan ~{short_duration(remaining)}" if remaining else ""
+                    eta = self.t("eta_remaining").format(short_duration(remaining, self.lang.get())) if remaining else ""
                     self.after(0, self._set_status, f"{self.t('processing')} %{percent:.1f}{eta}", ACCENT)
             elif line == "progress=end" and duration and not saw_progress:
                 self.after(0, self.progress.set, min(99, phase_start + phase_size))
@@ -1023,13 +1332,15 @@ class App(tk.Tk):
         return os.path.join(folder, f"{base}_cut_{stamp}.{output_format}")
 
     def _newest_file(self, folder):
-        files = []
-        for root, _dirs, names in os.walk(folder):
-            for name in names:
-                path = os.path.join(root, name)
-                if os.path.isfile(path):
-                    files.append(path)
-        return max(files, key=os.path.getmtime) if files else None
+        try:
+            files = [
+                os.path.join(folder, f)
+                for f in os.listdir(folder)
+                if os.path.isfile(os.path.join(folder, f))
+            ]
+            return max(files, key=os.path.getmtime) if files else None
+        except OSError:
+            return None
 
     def _cancel(self):
         if self._proc:
