@@ -102,6 +102,8 @@ dist/ytdlp_gui.exe
 
 You do not need to run Python commands for the EXE version. However, `yt-dlp` and `ffmpeg` still need to be installed and available on your system.
 
+Some packages may include `yt-dlp.exe` and `ffmpeg.exe` next to `ytdlp_gui.exe`. In that case, the app can use those bundled files directly. If downloads, cutting, merging or re-encoding start failing, these bundled tools may be outdated. Download the latest versions of yt-dlp and ffmpeg and replace the old `.exe` files.
+
 ## Build an EXE
 
 ```bash
@@ -144,6 +146,7 @@ Use **720p** or **480p** when you want faster processing and smaller files. 720p
 - Re-encoding is CPU-heavy and can take several minutes on long or high-resolution videos.
 - If the app is open, Windows may block overwriting `dist/ytdlp_gui.exe`. Close the app before rebuilding.
 - The `build` folder is only a temporary PyInstaller folder. It is not required for users.
+- Bundled `yt-dlp.exe` and `ffmpeg.exe` files can become outdated. Updating them often fixes download or conversion errors.
 
 ## License
 
@@ -258,6 +261,8 @@ dist/ytdlp_gui.exe
 
 EXE sürümünü kullanmak için Python komutları çalıştırmanız gerekmez. Ancak `yt-dlp` ve `ffmpeg` yine sistemde kurulu ve erişilebilir olmalıdır.
 
+Bazı paketlerde `ytdlp_gui.exe` yanında `yt-dlp.exe` ve `ffmpeg.exe` dosyaları bulunabilir. Bu durumda uygulama bu dosyaları doğrudan kullanabilir. İndirme, kesme, birleştirme veya yeniden kodlama hata vermeye başlarsa bu paketli araçlar eski kalmış olabilir. yt-dlp ve ffmpeg'in güncel sürümlerini indirip eski `.exe` dosyalarının yerine koyun.
+
 ## EXE Oluşturma
 
 ```bash
@@ -300,6 +305,7 @@ Daha hızlı işlem ve daha küçük dosya için **720p** veya **480p** seçin. 
 - Yeniden kodlama işlemciyi yoğun kullanır ve uzun veya yüksek çözünürlüklü videolarda birkaç dakika sürebilir.
 - Uygulama açıksa Windows `dist/ytdlp_gui.exe` dosyasının üzerine yazmayı engelleyebilir. Yeniden paketlemeden önce uygulamayı kapatın.
 - `build` klasörü sadece PyInstaller'ın geçici çalışma klasörüdür. Kullanıcılar için gerekli değildir.
+- Paket içindeki `yt-dlp.exe` ve `ffmpeg.exe` zamanla eski kalabilir. Bu dosyaları güncellemek indirme veya dönüştürme hatalarını çoğu zaman çözer.
 
 ## Lisans
 
