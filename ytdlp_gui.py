@@ -1,4 +1,5 @@
 import os
+import base64
 import locale
 import re
 import shutil
@@ -100,6 +101,14 @@ I18N = {
         "range_label": "Seçili",
         "full_video": "Tüm video",
         "open_folder": "📂 Klasörü Aç",
+        "preview": "🔍 Önizle",
+        "preview_generating": "Önizleme hazırlanıyor…",
+        "preview_start_label": "Başlangıç",
+        "preview_end_label": "Bitiş",
+        "preview_failed": "Önizleme alınamadı",
+        "preview_ffmpeg_required": "Önizleme için ffmpeg gerekli.",
+        "preview_need_fetch": "Önce Formatları Getir'e basın.",
+        "preview_note": "Kesmenin gerçek başlangıç/bitiş karesi — keyframe kaymasını burada görürsünüz.",
     },
     "en": {
         "app_title": "yt-dlp GUI",
@@ -169,6 +178,14 @@ I18N = {
         "range_label": "Selected",
         "full_video": "Full video",
         "open_folder": "📂 Open Folder",
+        "preview": "🔍 Preview",
+        "preview_generating": "Generating preview…",
+        "preview_start_label": "Start",
+        "preview_end_label": "End",
+        "preview_failed": "Preview failed",
+        "preview_ffmpeg_required": "ffmpeg is required for preview.",
+        "preview_need_fetch": "Fetch formats first.",
+        "preview_note": "Actual first/last frame of the cut — see keyframe drift here before downloading.",
     },
 }
 
@@ -407,8 +424,8 @@ class TimelineWidget(tk.Canvas):
         return None
 
     def _move(self, handle, x):
-        sec     = self._x_to_sec(x)
-        min_gap = max(0.5, self._duration * 0.001)
+        sec     = round(self._x_to_sec(x))          # tam saniyeye yuvarla — mouse sürüklemesi
+        min_gap = max(1.0, round(self._duration * 0.001))  # zaten alt-saniye hassas değil
         if handle == "start":
             self._start_sec = max(0.0, min(sec, self._end_sec - min_gap))
         else:
@@ -596,6 +613,28 @@ class App(tk.Tk):
 
         self.start_var.trace_add("write", lambda *_: self._on_entry_change())
         self.end_var.trace_add("write",   lambda *_: self._on_entry_change())
+
+        # Önizleme
+        preview_row = tk.Frame(f, bg=BG)
+        preview_row.pack(fill="x", pady=(0, 4))
+        self.preview_btn = self._btn(preview_row, "preview", self._preview, small=True)
+        self.preview_btn.pack(side="left")
+        self.preview_status = tk.Label(preview_row, text="", font=FNSM, bg=BG, fg=DIM,
+                                       wraplength=380, justify="left", anchor="w")
+        self.preview_status.pack(side="left", padx=8, fill="x", expand=True)
+
+        self.preview_frame = tk.Frame(f, bg=BG)
+        self.preview_frame.pack(fill="x", pady=(0, 4))
+        self.preview_frame.columnconfigure(0, weight=1)
+        self.preview_frame.columnconfigure(1, weight=1)
+        self._preview_imgs = {}   # tk.PhotoImage referanslarını canlı tut (GC'ye kurban gitmesin)
+
+        self.preview_start_img_lbl = tk.Label(self.preview_frame, bg=SURF, bd=0)
+        self.preview_end_img_lbl   = tk.Label(self.preview_frame, bg=SURF, bd=0)
+        self.preview_start_cap     = tk.Label(self.preview_frame, font=FNSM, bg=BG, fg=GREEN)
+        self.preview_end_cap       = tk.Label(self.preview_frame, font=FNSM, bg=BG, fg=RED)
+        self.preview_note_lbl      = tk.Label(self.preview_frame, font=("Segoe UI", 8),
+                                              bg=BG, fg=DIM, wraplength=420, justify="left")
 
         # Kesme yöntemi
         tk.Frame(f, bg=BORDER, height=1).pack(fill="x", pady=(0, 8))
@@ -798,6 +837,7 @@ class App(tk.Tk):
     # ── Buton aksiyonları ─────────────────────────────────────
     def _on_format_select(self, _event=None):
         """Başlık satırı seçilince bir sonraki geçerli satıra atla."""
+        self._clear_preview()
         sel = self.format_list.curselection()
         if not sel:
             return
@@ -892,6 +932,7 @@ class App(tk.Tk):
         self.fetch_btn.config(state="disabled")
         self.url_entry.config(state="disabled")
         self.fetch_status.config(text=self.t("fetching"), fg=ORANGE)
+        self._clear_preview()
         threading.Thread(target=self._do_fetch, args=(ytdlp, url), daemon=True).start()
 
     def _do_fetch(self, ytdlp, url):
@@ -985,6 +1026,143 @@ class App(tk.Tk):
             return None, None
         lbl = self.format_list.get(sel[0])
         return lbl.strip(), self._fmap.get(lbl)
+
+    # ── Önizleme ────────────────────────────────────────────────
+    # İndirmeden önce seçilen başlangıç/bitiş noktalarındaki gerçek kareyi
+    # gösterir. Sadece o noktaların ~1-2 saniyelik küçük bir bölümü indirilir
+    # (yt-dlp'nin kendi --download-sections + --force-keyframes-at-cuts
+    # mekanizmasıyla, tıpkı "Direkt kes" modundaki gibi) — böylece keyframe
+    # kayması varsa tüm videoyu indirmeden burada görülür.
+    def _preview(self):
+        url = self.url_var.get().strip()
+        if not url:
+            messagebox.showwarning("URL", self.t("need_url"))
+            return
+        if not self._formats_fetched or self._duration <= 0:
+            self.preview_status.config(text=self.t("preview_need_fetch"), fg=ORANGE)
+            return
+
+        _, fmt = self._get_format()
+        if fmt is None:
+            messagebox.showerror(self.t("error"), self.t("need_format"))
+            return
+        if "|audio|" in fmt or self.output_format.get() in AUDIO_FORMATS:
+            self.preview_status.config(text=self.t("preview_failed"), fg=ORANGE)
+            return
+
+        ytdlp  = find_exe("yt-dlp")
+        ffmpeg = find_exe("ffmpeg")
+        if not ytdlp:
+            messagebox.showerror(self.t("error"), f"yt-dlp {self.t('not_found')}.")
+            return
+        if not ffmpeg:
+            messagebox.showerror(self.t("error"), self.t("preview_ffmpeg_required"))
+            return
+
+        try:    start_sec = time_to_seconds(self.start_var.get().strip())
+        except: start_sec = None
+        try:    end_sec   = time_to_seconds(self.end_var.get().strip())
+        except: end_sec   = None
+        start_sec = start_sec if start_sec is not None else 0.0
+        end_sec   = end_sec   if end_sec   is not None else self._duration
+
+        self._clear_preview()
+        self.preview_btn.config(state="disabled")
+        self.preview_status.config(text=self.t("preview_generating"), fg=ORANGE)
+        threading.Thread(target=self._do_preview,
+                         args=(url, fmt, ytdlp, ffmpeg, start_sec, end_sec),
+                         daemon=True).start()
+
+    def _do_preview(self, url, fmt, ytdlp, ffmpeg, start_sec, end_sec):
+        temp_dir = None
+        try:
+            temp_dir = tempfile.mkdtemp(prefix="_ytdlp_gui_preview_")
+            end_point = max(0.0, end_sec - 0.3)   # tam bitişten az önce, siyah/boş kareden kaçın
+            images = {}
+            for key, point in (("start", start_sec), ("end", end_point)):
+                clip, clip_start = self._grab_preview_clip(ytdlp, ffmpeg, url, fmt, point, temp_dir, key)
+                if not clip:
+                    continue
+                frame = self._extract_frame(ffmpeg, clip, max(0.0, point - clip_start))
+                if frame:
+                    images[key] = frame
+            if not images:
+                raise RuntimeError(self.t("preview_failed"))
+            self.after(0, self._show_preview, images, start_sec, end_sec)
+        except Exception as exc:
+            self.after(0, self.preview_status.config,
+                       {"text": f"{self.t('preview_failed')}: {exc}", "fg": RED})
+        finally:
+            if temp_dir:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            self.after(0, self.preview_btn.config, {"state": "normal"})
+
+    def _grab_preview_clip(self, ytdlp, ffmpeg, url, fmt, point, temp_dir, key):
+        margin = 1.5
+        s = max(0.0, point - margin)
+        e = point + margin
+        out_tmpl = os.path.join(temp_dir, f"{key}_%(id)s.%(ext)s")
+        cmd = [ytdlp, "--newline", "--no-playlist", "--no-part",
+               "--ffmpeg-location", ffmpeg,
+               "-f", fmt, "--merge-output-format", "mp4",
+               "--download-sections", f"*{seconds_to_time(s)}-{seconds_to_time(e)}",
+               "--force-keyframes-at-cuts",
+               "-o", out_tmpl, url]
+        result = subprocess.run(
+            cmd, capture_output=True, text=True,
+            encoding=CONSOLE_ENCODING, errors="replace",
+            creationflags=self._creation_flags(),
+        )
+        if result.returncode != 0:
+            return None, s
+        clip = self._newest_file(temp_dir)
+        return clip, s
+
+    def _extract_frame(self, ffmpeg, clip_path, offset):
+        cmd = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+               "-ss", seconds_to_time(max(0.0, offset)), "-i", clip_path,
+               "-frames:v", "1", "-vf", "scale=200:-2",
+               "-f", "image2pipe", "-vcodec", "ppm", "-"]
+        result = subprocess.run(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            creationflags=self._creation_flags(),
+        )
+        if result.returncode != 0 or not result.stdout:
+            return None
+        return base64.b64encode(result.stdout).decode("ascii")
+
+    def _show_preview(self, images, start_sec, end_sec):
+        self.preview_status.config(text="", fg=DIM)
+        self._preview_imgs = {}
+        col = 0
+        if "start" in images:
+            img = tk.PhotoImage(data=images["start"])
+            self._preview_imgs["start"] = img
+            self.preview_start_img_lbl.config(image=img)
+            self.preview_start_img_lbl.grid(row=0, column=col, padx=4, pady=(4, 2))
+            self.preview_start_cap.config(
+                text=f"{self.t('preview_start_label')}  {_fmt_compact(seconds_to_time(start_sec))}")
+            self.preview_start_cap.grid(row=1, column=col, padx=4)
+            col += 1
+        if "end" in images:
+            img = tk.PhotoImage(data=images["end"])
+            self._preview_imgs["end"] = img
+            self.preview_end_img_lbl.config(image=img)
+            self.preview_end_img_lbl.grid(row=0, column=col, padx=4, pady=(4, 2))
+            self.preview_end_cap.config(
+                text=f"{self.t('preview_end_label')}  {_fmt_compact(seconds_to_time(end_sec))}")
+            self.preview_end_cap.grid(row=1, column=col, padx=4)
+        self.preview_note_lbl.config(text=self.t("preview_note"))
+        self.preview_note_lbl.grid(row=2, column=0, columnspan=2, sticky="w", padx=4, pady=(4, 0))
+
+    def _clear_preview(self):
+        self.preview_status.config(text="")
+        self._preview_imgs = {}
+        for w in (self.preview_start_img_lbl, self.preview_end_img_lbl,
+                  self.preview_start_cap, self.preview_end_cap, self.preview_note_lbl):
+            w.grid_forget()
+        self.preview_start_img_lbl.config(image="")
+        self.preview_end_img_lbl.config(image="")
 
     # ── İndirme başlatma ──────────────────────────────────────
     def _start(self):
