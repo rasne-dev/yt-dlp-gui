@@ -1017,7 +1017,8 @@ class App(tk.Tk):
 
         has_cut       = start_sec is not None or end_sec is not None
         is_audio      = "|audio|" in fmt or self.output_format.get() in AUDIO_FORMATS
-        needs_ffmpeg  = (has_cut and self.mode.get() in ("post", "reencode")) or is_audio
+        needs_merge   = "+" in fmt
+        needs_ffmpeg  = has_cut or is_audio or needs_merge
         if needs_ffmpeg and not ffmpeg:
             messagebox.showerror(self.t("error"), self.t("ffmpeg_required"))
             return
@@ -1054,6 +1055,13 @@ class App(tk.Tk):
                 output_template   = os.path.join(folder, "%(title).180B.%(ext)s")
 
             cmd = [ytdlp, "--newline", "--no-playlist", "--no-part", "-o", output_template]
+            if ffmpeg:
+                # find_exe() sadece Python tarafında ffmpeg'i bulur; yt-dlp'nin kendi iç
+                # işlemleri (format birleştirme, ses çıkarma, --download-sections /
+                # --force-keyframes-at-cuts) ffmpeg'i PATH'te aramaz. Konumu açıkça
+                # bildirmezsek yt-dlp bulunamıyor sanır ve merge/kesme sessizce
+                # bozuk çalışır ya da hata verir (bundled exe / Scripts klasörü durumu).
+                cmd += ["--ffmpeg-location", ffmpeg]
             if is_audio:
                 af = output_format if output_format in AUDIO_FORMATS else "mp3"
                 bf = fmt.split("|audio|")[0] if "|audio|" in fmt else "bestaudio/best"
