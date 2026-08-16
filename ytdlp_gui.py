@@ -30,6 +30,8 @@ FNMONO  = ("Consolas", 9)
 FMTS    = ["mp4", "mkv", "webm", "mov", "avi", "mp3", "aac", "ogg", "m4a", "flac", "wav"]
 AUDIO_FORMATS = {"mp3", "aac", "ogg", "m4a", "flac", "wav"}
 CONSOLE_ENCODING = locale.getpreferredencoding(False) or "utf-8"
+PREVIEW_CLIP_TIMEOUT  = 25   # sn — bir kesme noktası için yt-dlp'nin küçük klip indirme süresi üst sınırı
+PREVIEW_FRAME_TIMEOUT = 15   # sn — ffmpeg'in tek kareyi çıkarma süresi üst sınırı
 
 
 I18N = {
@@ -43,7 +45,7 @@ I18N = {
         "quality": "Kalite / Format",
         "start": "Başlangıç",
         "end": "Bitiş",
-        "time_hint": "örn. 27:50 veya 01:02:03",
+        "time_hint": "örn. 27:50, 01:02:03 veya 21.5",
         "output_format": "Çıktı Formatı",
         "cut_method": "Kesme Yöntemi",
         "direct": "Direkt kes  (hızlı, bazen keyframe'e kayar)",
@@ -109,6 +111,9 @@ I18N = {
         "preview_ffmpeg_required": "Önizleme için ffmpeg gerekli.",
         "preview_need_fetch": "Önce Formatları Getir'e basın.",
         "preview_note": "Kesmenin gerçek başlangıç/bitiş karesi — keyframe kaymasını burada görürsünüz.",
+        "preview_step_start": "Başlangıç karesi indiriliyor… (en fazla {}sn)",
+        "preview_step_end": "Bitiş karesi indiriliyor… (en fazla {}sn)",
+        "preview_timeout": "Zaman aşımı — site/ağ yanıt vermedi.",
     },
     "en": {
         "app_title": "yt-dlp GUI",
@@ -120,7 +125,7 @@ I18N = {
         "quality": "Quality / Format",
         "start": "Start",
         "end": "End",
-        "time_hint": "e.g. 27:50 or 01:02:03",
+        "time_hint": "e.g. 27:50, 01:02:03 or 21.5",
         "output_format": "Output Format",
         "cut_method": "Cut Method",
         "direct": "Direct cut  (fast, may snap to keyframes)",
@@ -186,6 +191,9 @@ I18N = {
         "preview_ffmpeg_required": "ffmpeg is required for preview.",
         "preview_need_fetch": "Fetch formats first.",
         "preview_note": "Actual first/last frame of the cut — see keyframe drift here before downloading.",
+        "preview_step_start": "Fetching start frame… (up to {}s)",
+        "preview_step_end": "Fetching end frame… (up to {}s)",
+        "preview_timeout": "Timed out — site/network did not respond.",
     },
 }
 
@@ -219,14 +227,16 @@ def time_to_seconds(value):
     parts = value.split(":")
     if len(parts) not in (2, 3):
         raise ValueError(value)
-    if any(not re.fullmatch(r"\d{1,2}", part) for part in parts):
-        raise ValueError(value)
-    nums = [int(p) for p in parts]
-    if len(nums) == 2:
-        hours, minutes, seconds = 0, nums[0], nums[1]
+    # Saat/dakika tam sayı olmalı; en sondaki saniye kısmı ondalıklı olabilir (örn. 0:21.5)
+    for i, part in enumerate(parts):
+        pattern = r"\d{1,2}(\.\d+)?" if i == len(parts) - 1 else r"\d{1,2}"
+        if not re.fullmatch(pattern, part):
+            raise ValueError(value)
+    if len(parts) == 2:
+        hours, minutes, seconds = 0, int(parts[0]), float(parts[1])
     else:
-        hours, minutes, seconds = nums
-    if minutes > 59 or seconds > 59:
+        hours, minutes, seconds = int(parts[0]), int(parts[1]), float(parts[2])
+    if minutes > 59 or seconds >= 60:
         raise ValueError(value)
     return hours * 3600 + minutes * 60 + seconds
 
@@ -282,9 +292,13 @@ def normalize_eta(value):
 
 
 def _fmt_compact(t):
-    """'00:27:50' → '27:50'"""
+    """'00:27:50' → '27:50'; '00:00:21.500' → '0:21.5' (gereksiz sıfırlar kırpılır)"""
     if t and t.startswith("00:"):
-        return t[3:]
+        t = t[3:]
+    if t and "." in t:
+        intpart, frac = t.split(".", 1)
+        frac = frac.rstrip("0")
+        t = intpart if not frac else f"{intpart}.{frac}"
     return t or ""
 
 
@@ -1079,7 +1093,11 @@ class App(tk.Tk):
             temp_dir = tempfile.mkdtemp(prefix="_ytdlp_gui_preview_")
             end_point = max(0.0, end_sec - 0.3)   # tam bitişten az önce, siyah/boş kareden kaçın
             images = {}
-            for key, point in (("start", start_sec), ("end", end_point)):
+            steps = (("start", start_sec, "preview_step_start"),
+                     ("end", end_point, "preview_step_end"))
+            for key, point, step_key in steps:
+                self.after(0, self.preview_status.config,
+                           {"text": self.t(step_key).format(PREVIEW_CLIP_TIMEOUT), "fg": ORANGE})
                 clip, clip_start = self._grab_preview_clip(ytdlp, ffmpeg, url, fmt, point, temp_dir, key)
                 if not clip:
                     continue
@@ -1104,15 +1122,21 @@ class App(tk.Tk):
         out_tmpl = os.path.join(temp_dir, f"{key}_%(id)s.%(ext)s")
         cmd = [ytdlp, "--newline", "--no-playlist", "--no-part",
                "--ffmpeg-location", ffmpeg,
+               "--retries", "2", "--fragment-retries", "2",
+               "--socket-timeout", "12", "--no-update",
                "-f", fmt, "--merge-output-format", "mp4",
                "--download-sections", f"*{seconds_to_time(s)}-{seconds_to_time(e)}",
                "--force-keyframes-at-cuts",
                "-o", out_tmpl, url]
-        result = subprocess.run(
-            cmd, capture_output=True, text=True,
-            encoding=CONSOLE_ENCODING, errors="replace",
-            creationflags=self._creation_flags(),
-        )
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True,
+                encoding=CONSOLE_ENCODING, errors="replace",
+                creationflags=self._creation_flags(),
+                timeout=PREVIEW_CLIP_TIMEOUT,
+            )
+        except subprocess.TimeoutExpired:
+            return None, s
         if result.returncode != 0:
             return None, s
         clip = self._newest_file(temp_dir)
@@ -1123,10 +1147,14 @@ class App(tk.Tk):
                "-ss", seconds_to_time(max(0.0, offset)), "-i", clip_path,
                "-frames:v", "1", "-vf", "scale=200:-2",
                "-f", "image2pipe", "-vcodec", "ppm", "-"]
-        result = subprocess.run(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-            creationflags=self._creation_flags(),
-        )
+        try:
+            result = subprocess.run(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                creationflags=self._creation_flags(),
+                timeout=PREVIEW_FRAME_TIMEOUT,
+            )
+        except subprocess.TimeoutExpired:
+            return None
         if result.returncode != 0 or not result.stdout:
             return None
         return base64.b64encode(result.stdout).decode("ascii")
