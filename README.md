@@ -16,6 +16,8 @@ A simple desktop app for downloading videos and audio with [yt-dlp](https://gith
 - MP4, MKV, WEBM, MOV, AVI, MP3, AAC, OGG, M4A, FLAC and WAV output options
 - Progress bar, status text, estimated remaining time and log view
 - Turkish and English interface
+- One-click in-app update for yt-dlp to easily resolve YouTube API changes
+- Keyboard shortcuts: `Enter` to analyze URL, `Ctrl+Enter` to start download, `Esc` to cancel
 
 ## Requirements
 
@@ -198,6 +200,8 @@ yt-dlp is a separate project and follows its own license:
 - MP4, MKV, WEBM, MOV, AVI, MP3, AAC, OGG, M4A, FLAC ve WAV çıktı seçenekleri
 - İlerleme çubuğu, durum yazısı, tahmini kalan süre ve log ekranı
 - Türkçe ve İngilizce arayüz
+- YouTube API değişikliklerine karşı tek tıkla arayüzden yt-dlp güncelleme
+- Klavye kısayolları: URL alanında Enter ile analiz, Ctrl+Enter ile indirme başlatma, Esc ile iptal
 
 ## Gereksinimler
 

@@ -12,6 +12,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 
+__version__ = "1.0.1"
 BG      = "#1e2029"
 SURF    = "#2a2d3a"
 SURF_2  = "#353848"
@@ -114,6 +115,11 @@ I18N = {
         "preview_step_start": "Başlangıç karesi indiriliyor… (en fazla {}sn)",
         "preview_step_end": "Bitiş karesi indiriliyor… (en fazla {}sn)",
         "preview_timeout": "Zaman aşımı — site/ağ yanıt vermedi.",
+        "update_ytdlp": "yt-dlp Güncelle",
+        "updating_ytdlp": "yt-dlp güncelleniyor…",
+        "update_success": "yt-dlp başarıyla güncellendi.",
+        "update_failed": "yt-dlp güncellemesi başarısız oldu.",
+        "http_403_hint": "İpucu: 403 Forbidden hatası genellikle YouTube'un eski yt-dlp sürümlerini engellemesinden kaynaklanır. 'yt-dlp Güncelle' butonuna tıklayarak güncelleyebilirsiniz.",
     },
     "en": {
         "app_title": "yt-dlp GUI",
@@ -194,6 +200,11 @@ I18N = {
         "preview_step_start": "Fetching start frame… (up to {}s)",
         "preview_step_end": "Fetching end frame… (up to {}s)",
         "preview_timeout": "Timed out — site/network did not respond.",
+        "update_ytdlp": "Update yt-dlp",
+        "updating_ytdlp": "Updating yt-dlp…",
+        "update_success": "yt-dlp updated successfully.",
+        "update_failed": "yt-dlp update failed.",
+        "http_403_hint": "Tip: 403 Forbidden errors usually happen when YouTube blocks outdated yt-dlp versions. Click 'Update yt-dlp' to update to the latest version.",
     },
 }
 
@@ -227,17 +238,19 @@ def time_to_seconds(value):
     parts = value.split(":")
     if len(parts) not in (2, 3):
         raise ValueError(value)
-    # Saat/dakika tam sayı olmalı; en sondaki saniye kısmı ondalıklı olabilir (örn. 0:21.5)
+    # Saat/dakika tam sayı olmalı (2 basamaktan fazla da olabilir: örn. 120:00); en son kısım saniyedir
     for i, part in enumerate(parts):
-        pattern = r"\d{1,2}(\.\d+)?" if i == len(parts) - 1 else r"\d{1,2}"
+        pattern = r"\d+(\.\d+)?" if i == len(parts) - 1 else r"\d+"
         if not re.fullmatch(pattern, part):
             raise ValueError(value)
     if len(parts) == 2:
         hours, minutes, seconds = 0, int(parts[0]), float(parts[1])
+        if seconds >= 60:
+            raise ValueError(value)
     else:
         hours, minutes, seconds = int(parts[0]), int(parts[1]), float(parts[2])
-    if minutes > 59 or seconds >= 60:
-        raise ValueError(value)
+        if minutes > 59 or seconds >= 60:
+            raise ValueError(value)
     return hours * 3600 + minutes * 60 + seconds
 
 
@@ -481,6 +494,9 @@ class App(tk.Tk):
         self._build()
         self._apply_language()
         self._fit_to_screen()
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.bind("<Control-Return>", lambda _e: self._start() if str(self.download_btn['state']) == 'normal' else None)
+        self.bind("<Escape>", lambda _e: self._cancel() if self._proc else None)
         self.after(200, self._check_startup)
 
     def t(self, key):
@@ -511,6 +527,8 @@ class App(tk.Tk):
 
         lang_f = tk.Frame(hdr, bg=BG)
         lang_f.pack(side="right")
+        self.update_btn = self._btn(lang_f, "update_ytdlp", self._update_ytdlp, small=True)
+        self.update_btn.pack(side="left", padx=(0, 10))
         self.lang_lbl = tk.Label(lang_f, font=FNSM, bg=BG, fg=DIM)
         self.lang_lbl.pack(side="left", padx=(0, 4))
         self.lang_menu = ttk.OptionMenu(lang_f, self.lang, "tr", "tr", "en",
@@ -543,6 +561,7 @@ class App(tk.Tk):
         self.url_var   = tk.StringVar()
         self.url_entry = self._entry(url_row, self.url_var)
         self.url_entry.pack(side="left", fill="x", expand=True)
+        self.url_entry.bind("<Return>", lambda _e: self._fetch())
         self._btn(url_row, "paste", self._paste, small=True).pack(side="left", padx=(6, 0))
 
         # Format getir
@@ -572,6 +591,7 @@ class App(tk.Tk):
         self.format_list.bind("<Enter>", lambda _e: self.unbind("<MouseWheel>"))
         self.format_list.bind("<Leave>", lambda _e: self.bind("<MouseWheel>", self._mousewheel) if self._cursor_in_canvas() else None)
         self.format_list.bind("<<ListboxSelect>>", self._on_format_select)
+        self.format_list.bind("<Double-Button-1>", lambda _e: self._start() if str(self.download_btn['state']) == 'normal' else None)
 
         # Başlangıç / Bitiş / Format grid
         grid = tk.Frame(f, bg=BG)
@@ -875,7 +895,10 @@ class App(tk.Tk):
 
     def _paste(self):
         try:
-            self.url_var.set(self.clipboard_get().strip())
+            val = self.clipboard_get().strip()
+            self.url_var.set(val)
+            self.url_entry.focus_set()
+            self.url_entry.icursor("end")
         except tk.TclError:
             pass
 
@@ -937,6 +960,7 @@ class App(tk.Tk):
     def _fetch(self):
         url = self.url_var.get().strip()
         if not url:
+            self.url_entry.focus_set()
             messagebox.showwarning("URL", self.t("need_url"))
             return
         ytdlp = find_exe("yt-dlp")
@@ -1315,6 +1339,11 @@ class App(tk.Tk):
             self.after(0, self._set_status, self.t("error"), RED)
             self.after(0, self._log, f"✖  {self.t('error')}: {exc}", RED)
         finally:
+            if temp_dir and os.path.exists(temp_dir):
+                try:
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+                except Exception:
+                    pass
             self._proc      = None
             self._canceling = False
             self.after(0, self.download_btn.config, {"state": "normal"})
@@ -1324,6 +1353,7 @@ class App(tk.Tk):
     def _run_ytdlp(self, cmd, phase_start, phase_size):
         destination = None
         saw_percent = False
+        has_403 = False
         self.after(0, self.progress_bar.config, {"mode": "indeterminate"})
         self.after(0, self.progress_bar.start, 12)
         self._proc = subprocess.Popen(
@@ -1335,6 +1365,8 @@ class App(tk.Tk):
             line = raw.strip()
             if not line:
                 continue
+            if "403" in line or "older than 90 days" in line:
+                has_403 = True
             m = re.search(r"\[download\]\s+([\d.]+)%", line)
             if m:
                 if not saw_percent:
@@ -1357,6 +1389,8 @@ class App(tk.Tk):
         if self._proc.returncode not in (0, None):
             if self._canceling or self._proc.returncode < 0:
                 raise RuntimeError("canceled")
+            if has_403:
+                self.after(0, self._log, f"💡  {self.t('http_403_hint')}", ORANGE)
             raise RuntimeError(f"yt-dlp exit {self._proc.returncode}")
         return destination
 
@@ -1482,7 +1516,9 @@ class App(tk.Tk):
         return current
 
     def _build_output_path(self, folder, source, fmt):
-        base   = re.sub(r"\s+", " ", os.path.splitext(os.path.basename(source))[0]).strip()
+        raw_name = os.path.splitext(os.path.basename(source))[0]
+        sanitized = re.sub(r'[\\/*?:"<>|]', "_", raw_name)
+        base   = re.sub(r"\s+", " ", sanitized).strip()
         output = os.path.join(folder, f"{base}_cut.{fmt}")
         if not os.path.exists(output):
             return output
@@ -1563,8 +1599,63 @@ class App(tk.Tk):
             if "ffmpeg"  in miss: self._log(self.t("install_ffmpeg"), ORANGE)
             self._set_status(self.t("missing_deps"), ORANGE)
         else:
-            self._log(f"✔  {self.t('deps_ready')}", GREEN)
+            ver = ""
+            ytdlp = find_exe("yt-dlp")
+            if ytdlp:
+                try:
+                    res = subprocess.run([ytdlp, "--version"], capture_output=True, text=True,
+                                         encoding=CONSOLE_ENCODING, errors="replace",
+                                         creationflags=self._creation_flags())
+                    if res.returncode == 0:
+                        ver = f" (v{res.stdout.strip()})"
+                except Exception:
+                    pass
+            self._log(f"✔  yt-dlp{ver} {self.t('deps_ready')}", GREEN)
             self._set_status(self.t("ready"), DIM)
+
+    def _update_ytdlp(self):
+        ytdlp = find_exe("yt-dlp")
+        if not ytdlp:
+            self._log(f"✖  yt-dlp {self.t('not_found')}", RED)
+            return
+
+        self.update_btn.config(state="disabled")
+        self._set_status(self.t("updating_ytdlp"), ACCENT)
+        self._log(f"▶  {self.t('updating_ytdlp')}", ACCENT)
+
+        def worker():
+            try:
+                proc = subprocess.Popen(
+                    [ytdlp, "-U"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    encoding=CONSOLE_ENCODING,
+                    errors="replace",
+                    creationflags=self._creation_flags(),
+                )
+                for raw in proc.stdout:
+                    line = raw.strip()
+                    if line:
+                        self.after(0, self._log, line, self._line_color(line))
+                proc.wait()
+                if proc.returncode == 0:
+                    self.after(0, self._log, f"✔  {self.t('update_success')}", GREEN)
+                    self.after(0, self._set_status, self.t("ready"), DIM)
+                else:
+                    self.after(0, self._log, f"✖  {self.t('update_failed')}", RED)
+                    self.after(0, self._set_status, self.t("error"), RED)
+            except Exception as exc:
+                self.after(0, self._log, f"✖  {self.t('update_failed')}: {exc}", RED)
+                self.after(0, self._set_status, self.t("error"), RED)
+            finally:
+                self.after(0, lambda: self.update_btn.config(state="normal"))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_close(self):
+        self._cancel()
+        self.destroy()
 
     def _creation_flags(self):
         return subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
