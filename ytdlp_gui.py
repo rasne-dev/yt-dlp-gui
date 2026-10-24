@@ -12,7 +12,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 
-__version__ = "1.0.1"
+__version__ = "1.0.2"
 BG      = "#1e2029"
 SURF    = "#2a2d3a"
 SURF_2  = "#353848"
@@ -51,7 +51,10 @@ I18N = {
         "cut_method": "Kesme Yöntemi",
         "direct": "Direkt kes  (hızlı, bazen keyframe'e kayar)",
         "post": "Tam indir → kes  (hızlı kopya)",
-        "reencode": "Tam indir → yeniden kodla  (en doğru, yavaş)",
+        "reencode": "Tam indir → yeniden kodla  (en doğru, sıfır kayma)",
+        "direct_desc": "⚡ Hızlı: Sadece istenen aralığı indirir. YouTube anahtar karelerine (keyframe) kilitlendiği için 1-3 sn kayma yapabilir ve akış modunda yüzde göstermez.",
+        "post_desc": "⏱ Hızlı Kopya: Tam videoyu indirip kayıpsız keser. Yeniden kodlamadığı için anahtar kareye göre küçük kayma normaldir.",
+        "reencode_desc": "🎯 SIFIR KAYMA (Önerilen): Kare kare yeniden kodlar. Milisaniyesine kadar tam kareden keser, hiç kaymaz ve canlı yüzde/kalan süre gösterir.",
         "codec": "Codec  (yeniden kodlama modunda)",
         "h264": "h264 – uyumlu",
         "h265": "h265 – küçük dosya",
@@ -136,7 +139,10 @@ I18N = {
         "cut_method": "Cut Method",
         "direct": "Direct cut  (fast, may snap to keyframes)",
         "post": "Download full → cut  (fast copy)",
-        "reencode": "Download full → re-encode  (most accurate, slow)",
+        "reencode": "Download full → re-encode  (most accurate, zero drift)",
+        "direct_desc": "⚡ Fast: Downloads only section. Snaps to keyframes (1-3s drift possible) and does not show streaming percent.",
+        "post_desc": "⏱ Fast Copy: Downloads full video and cuts losslessly. Minor keyframe drift is normal since no re-encoding happens.",
+        "reencode_desc": "🎯 ZERO DRIFT (Recommended): Frame-accurate re-encode. Cuts exact frame with zero drift and shows live percent/ETA.",
         "codec": "Codec  (re-encode mode)",
         "h264": "h264 – compatible",
         "h265": "h265 – smaller file",
@@ -677,7 +683,16 @@ class App(tk.Tk):
         mode_row.pack(fill="x", pady=(3, 6))
         self.mode = tk.StringVar(value="post")
         for val, key in (("direct", "direct"), ("post", "post"), ("reencode", "reencode")):
-            self._radio(mode_row, self.mode, val, key).pack(anchor="w", pady=2)
+            rb = self._radio(mode_row, self.mode, val, key)
+            rb.pack(anchor="w", pady=2)
+            rb.bind("<Enter>", lambda _e, v=val: self._update_mode_desc(v))
+            rb.bind("<Leave>", lambda _e: self._update_mode_desc())
+
+        self.mode_desc_lbl = tk.Label(f, font=FNSM, bg=SURF, fg=TEXT,
+                                      wraplength=480, justify="left", anchor="w",
+                                      padx=10, pady=6, relief="flat",
+                                      highlightbackground=BORDER, highlightthickness=1)
+        self.mode_desc_lbl.pack(fill="x", pady=(2, 6))
 
         # Codec / çözünürlük
         codec_size_row = tk.Frame(f, bg=BG)
@@ -811,6 +826,14 @@ class App(tk.Tk):
         state = "normal" if self.mode.get() == "reencode" else "disabled"
         for rb in self._codec_radios + self._size_radios:
             rb.config(state=state)
+        self._update_mode_desc()
+
+    def _update_mode_desc(self, hover_val=None):
+        if not hasattr(self, "mode_desc_lbl"):
+            return
+        m = hover_val or self.mode.get()
+        desc = self.t(f"{m}_desc")
+        self.mode_desc_lbl.config(text=desc)
 
     def _apply_language(self):
         self.title(self.t("app_title"))
@@ -833,6 +856,7 @@ class App(tk.Tk):
         if not self._formats_fetched:
             self._default_formats()
         self._update_reencode_widgets()
+        self._update_mode_desc()
 
     def _format_changed(self):
         self.tip_lbl.config(text=self.t("twitter_tip") if self.output_format.get() == "mp4" else "")
@@ -1306,7 +1330,10 @@ class App(tk.Tk):
                 cmd += ["--download-sections", f"*{s}-{e}", "--force-keyframes-at-cuts"]
 
             cmd.append(url)
-            self.after(0, self._set_status, f"{self.t('downloading')}…", ACCENT)
+            if has_cut and mode == "direct":
+                self.after(0, self._set_status, "Kesit doğrudan akıştan çekiliyor… (Lütfen bekleyin)", ACCENT)
+            else:
+                self.after(0, self._set_status, f"{self.t('downloading')}…", ACCENT)
             downloaded = self._run_ytdlp(cmd, 0, self._phase_weights[0])
 
             if needs_post:
