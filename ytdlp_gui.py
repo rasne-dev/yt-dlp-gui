@@ -12,7 +12,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 
-__version__ = "1.0.3"
+__version__ = "1.0.4"
 BG      = "#1e2029"
 SURF    = "#2a2d3a"
 SURF_2  = "#353848"
@@ -264,6 +264,9 @@ def seconds_to_time(seconds):
     seconds = max(0.0, float(seconds))
     whole = int(seconds)
     ms = int(round((seconds - whole) * 1000))
+    if ms >= 1000:
+        whole += 1
+        ms = 0
     h = whole // 3600
     m = (whole % 3600) // 60
     s = whole % 60
@@ -681,7 +684,7 @@ class App(tk.Tk):
         self._lbl(f, "cut_method")
         mode_row = tk.Frame(f, bg=BG)
         mode_row.pack(fill="x", pady=(3, 6))
-        self.mode = tk.StringVar(value="post")
+        self.mode = tk.StringVar(value="reencode")
         for val, key in (("direct", "direct"), ("post", "post"), ("reencode", "reencode")):
             rb = self._radio(mode_row, self.mode, val, key)
             rb.pack(anchor="w", pady=2)
@@ -1194,7 +1197,7 @@ class App(tk.Tk):
         cmd = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
                "-ss", seconds_to_time(max(0.0, offset)), "-i", clip_path,
                "-frames:v", "1", "-vf", "scale=200:-2",
-               "-f", "image2pipe", "-vcodec", "ppm", "-"]
+               "-f", "image2pipe", "-vcodec", "png", "-"]
         try:
             result = subprocess.run(
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
@@ -1302,11 +1305,12 @@ class App(tk.Tk):
             needs_post   = has_cut and mode in ("post", "reencode")
             self._phase_weights = (0.75, 0.25) if needs_post else (1.0, 0.0)
 
+            now_str = time.strftime("%Y%m%d_%H%M%S")
             if needs_post:
                 temp_dir          = tempfile.mkdtemp(prefix="_ytdlp_gui_", dir=folder)
-                output_template   = os.path.join(temp_dir, "%(id)s.%(ext)s")
+                output_template   = os.path.join(temp_dir, "%(title).150B.%(ext)s")
             else:
-                output_template   = os.path.join(folder, "%(title).180B.%(ext)s")
+                output_template   = os.path.join(folder, f"%(title).150B_{now_str}.%(ext)s")
 
             cmd = [ytdlp, "--newline", "--no-playlist", "--no-part", "-o", output_template]
             if ffmpeg:
@@ -1425,10 +1429,14 @@ class App(tk.Tk):
     def _run_ffmpeg_cut(self, source, output, start_sec, end_sec, mode, is_audio):
         duration = (end_sec - start_sec) if start_sec is not None and end_sec is not None else None
 
-        if mode == "reencode" and start_sec and start_sec > 3:
-            margin     = 3.0
-            in_seek    = max(0.0, start_sec - margin)
-            inner_seek = start_sec - in_seek
+        if mode == "reencode" and start_sec:
+            margin = 3.0
+            if start_sec > margin:
+                in_seek = start_sec - margin
+                inner_seek = margin
+            else:
+                in_seek = 0.0
+                inner_seek = start_sec
         elif start_sec:
             in_seek, inner_seek = start_sec, 0.0
         else:
@@ -1547,10 +1555,16 @@ class App(tk.Tk):
         raw_name = os.path.splitext(os.path.basename(source))[0]
         sanitized = re.sub(r'[\\/*?:"<>|]', "_", raw_name)
         base   = re.sub(r"\s+", " ", sanitized).strip()
-        output = os.path.join(folder, f"{base}_cut.{fmt}")
-        if not os.path.exists(output):
-            return output
-        return os.path.join(folder, f"{base}_cut_{time.strftime('%Y%m%d_%H%M%S')}.{fmt}")
+        ts     = time.strftime("%Y%m%d_%H%M%S")
+        candidate = os.path.join(folder, f"{base}_{ts}.{fmt}")
+        if not os.path.exists(candidate):
+            return candidate
+        counter = 1
+        while True:
+            candidate = os.path.join(folder, f"{base}_{ts}_{counter}.{fmt}")
+            if not os.path.exists(candidate):
+                return candidate
+            counter += 1
 
     def _newest_file(self, folder):
         try:
