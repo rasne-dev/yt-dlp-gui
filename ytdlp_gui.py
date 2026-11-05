@@ -12,7 +12,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 
-__version__ = "1.0.2"
+__version__ = "1.0.3"
 BG      = "#1e2029"
 SURF    = "#2a2d3a"
 SURF_2  = "#353848"
@@ -1466,6 +1466,7 @@ class App(tk.Tk):
                 if mh:
                     cmd += ["-vf", f"scale=-2:min({mh}\\,ih)"]
                 cmd += ["-c:v", vc, "-preset", "superfast", "-crf", "21",
+                        "-pix_fmt", "yuv420p",
                         "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart"]
         else:
             cmd += ["-c", "copy", "-avoid_negative_ts", "make_zero"]

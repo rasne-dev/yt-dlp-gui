@@ -105,6 +105,8 @@ python3 -m pip install -U yt-dlp
 python ytdlp_gui.py
 ```
 
+Or double-click `baslat.bat` on Windows.
+
 ## Run the Ready EXE
 
 If you downloaded a ready-to-use package, open the `dist` folder and run:
@@ -116,6 +118,25 @@ dist/ytdlp_gui.exe
 You do not need to run Python commands for the EXE version. However, `yt-dlp` and `ffmpeg` still need to be installed and available on your system.
 
 Some packages may include `yt-dlp.exe` and `ffmpeg.exe` next to `ytdlp_gui.exe`. In that case, the app can use those bundled files directly. If downloads, cutting, merging or re-encoding start failing, these bundled tools may be outdated. Download the latest versions of yt-dlp and ffmpeg and replace the old `.exe` files.
+
+### Windows Smart App Control Warning
+
+If `dist/ytdlp_gui.exe` fails to open on Windows 11 with the warning *"Smart App Control blocked an app that may be unsafe"*, it is because locally compiled or open-source executables do not have an expensive commercial digital code-signing certificate.
+
+**Solutions:**
+
+1. **Step 1 (Run via Terminal / Python - Recommended):**  
+   Running the app directly completely bypasses this executable filter.
+   - Run in terminal:
+     ```bash
+     python ytdlp_gui.py
+     ```
+   - Or simply double-click the **`baslat.bat`** file in the project directory.
+
+2. **Step 2 (Disable Smart App Control):**  
+   If you prefer launching the standalone `.exe` directly:
+   - Open the **Start Menu**, search for **Smart App Control** (Windows Security > App & browser control).
+   - Set it to **Off**.
 
 ## Build an EXE
 
@@ -289,6 +310,8 @@ python3 -m pip install -U yt-dlp
 python ytdlp_gui.py
 ```
 
+Veya Windows'ta doğrudan `baslat.bat` dosyasına çift tıklayabilirsiniz.
+
 ## Hazır EXE ile Çalıştırma
 
 Hazır paket indirdiyseniz `dist` klasörünü açıp şu dosyayı çalıştırın:
@@ -300,6 +323,25 @@ dist/ytdlp_gui.exe
 EXE sürümünü kullanmak için Python komutları çalıştırmanız gerekmez. Ancak `yt-dlp` ve `ffmpeg` yine sistemde kurulu ve erişilebilir olmalıdır.
 
 Bazı paketlerde `ytdlp_gui.exe` yanında `yt-dlp.exe` ve `ffmpeg.exe` dosyaları bulunabilir. Bu durumda uygulama bu dosyaları doğrudan kullanabilir. İndirme, kesme, birleştirme veya yeniden kodlama hata vermeye başlarsa bu paketli araçlar eski kalmış olabilir. yt-dlp ve ffmpeg'in güncel sürümlerini indirip eski `.exe` dosyalarının yerine koyun.
+
+### Windows Akıllı Uygulama Denetimi (Smart App Control) Engeli
+
+Windows 11'de `dist/ytdlp_gui.exe` dosyası açılmıyor ve *"Akıllı Uygulama Denetimi, güvenli olmayabilecek bir uygulamayı engelledi"* uyarısı veriyorsa; bu durum yerel derlenen dosyanın ticari bir kod imzalama sertifikasına sahip olmamasından kaynaklanır.
+
+**Çözüm Yolları:**
+
+1. **Adım (Terminalden veya BAT ile Çalıştırma - Önerilen):**  
+   Uygulamayı doğrudan kaynak kodundan çalıştırmak güvenlik engeline takılmaz.
+   - Terminal veya Komut İstemi'nden:
+     ```bash
+     python ytdlp_gui.py
+     ```
+   - Veya ana dizindeki **`baslat.bat`** dosyasına çift tıklayarak doğrudan açabilirsiniz.
+
+2. **Adım (Akıllı Uygulama Denetimi'ni Kapatma):**  
+   `.exe` dosyasını doğrudan çift tıklayarak kullanmaya devam etmek isterseniz bu denetimi devre dışı bırakabilirsiniz:
+   - **Başlat** menüsüne **"Akıllı Uygulama Denetimi"** (Windows Güvenliği > Uygulama ve tarayıcı denetimi > Akıllı Uygulama Denetimi ayarları) yazıp açın.
+   - Durumu **"Kapalı"** konuma getirin.
 
 ## EXE Oluşturma
 
