@@ -12,7 +12,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 
-__version__ = "1.0.4"
+__version__ = "1.0.5"
 BG      = "#1e2029"
 SURF    = "#2a2d3a"
 SURF_2  = "#353848"
@@ -49,12 +49,12 @@ I18N = {
         "time_hint": "örn. 27:50, 01:02:03 veya 21.5",
         "output_format": "Çıktı Formatı",
         "cut_method": "Kesme Yöntemi",
-        "direct": "Direkt kes  (hızlı, bazen keyframe'e kayar)",
-        "post": "Tam indir → kes  (hızlı kopya)",
+        "direct": "Direkt kes  (kota dostu, bazen keyframe'e kayar)",
+        "post": "Tam indir → kes  (hızlı kopya, kayıpsız)",
         "reencode": "Tam indir → yeniden kodla  (en doğru, sıfır kayma)",
-        "direct_desc": "⚡ Hızlı: Sadece istenen aralığı indirir. YouTube anahtar karelerine (keyframe) kilitlendiği için 1-3 sn kayma yapabilir ve akış modunda yüzde göstermez.",
-        "post_desc": "⏱ Hızlı Kopya: Tam videoyu indirip kayıpsız keser. Yeniden kodlamadığı için anahtar kareye göre küçük kayma normaldir.",
-        "reencode_desc": "🎯 SIFIR KAYMA (Önerilen): Kare kare yeniden kodlar. Milisaniyesine kadar tam kareden keser, hiç kaymaz ve canlı yüzde/kalan süre gösterir.",
+        "direct_desc": "⚡ Kota Dostu: Yalnızca seçilen zaman aralığını indirir. YouTube sunucu anahtar karelerine (keyframe) kilitlendiği için 1-3 sn kayma yapabilir.",
+        "post_desc": "⏱ Hızlı Kopya: Tam videoyu indirip yeniden kodlamadan saniyeler içinde böler. Orijinal kalitedir ancak anahtar kareye göre küçük kayma normaldir.",
+        "reencode_desc": "🎯 SIFIR KAYMA (Varsayılan & Önerilen): Kare kare yeniden kodlar. Milisaniyesine kadar tam kareden keser, hiç kaymaz ve ses-görüntü senkronunu korur.",
         "codec": "Codec  (yeniden kodlama modunda)",
         "h264": "h264 – uyumlu",
         "h265": "h265 – küçük dosya",
@@ -137,12 +137,12 @@ I18N = {
         "time_hint": "e.g. 27:50, 01:02:03 or 21.5",
         "output_format": "Output Format",
         "cut_method": "Cut Method",
-        "direct": "Direct cut  (fast, may snap to keyframes)",
-        "post": "Download full → cut  (fast copy)",
+        "direct": "Direct cut  (bandwidth saver, may snap to keyframe)",
+        "post": "Download full → cut  (fast copy, lossless)",
         "reencode": "Download full → re-encode  (most accurate, zero drift)",
-        "direct_desc": "⚡ Fast: Downloads only section. Snaps to keyframes (1-3s drift possible) and does not show streaming percent.",
-        "post_desc": "⏱ Fast Copy: Downloads full video and cuts losslessly. Minor keyframe drift is normal since no re-encoding happens.",
-        "reencode_desc": "🎯 ZERO DRIFT (Recommended): Frame-accurate re-encode. Cuts exact frame with zero drift and shows live percent/ETA.",
+        "direct_desc": "⚡ Bandwidth Saver: Downloads only the selected range. Snaps to YouTube keyframes (1-3s drift possible).",
+        "post_desc": "⏱ Fast Copy: Downloads full video and cuts in seconds without re-encoding. Lossless quality, minor keyframe drift is normal.",
+        "reencode_desc": "🎯 ZERO DRIFT (Default & Recommended): Re-encodes frame by frame. Cuts exact frame with millisecond accuracy and perfect audio sync.",
         "codec": "Codec  (re-encode mode)",
         "h264": "h264 – compatible",
         "h265": "h265 – smaller file",
@@ -685,7 +685,7 @@ class App(tk.Tk):
         mode_row = tk.Frame(f, bg=BG)
         mode_row.pack(fill="x", pady=(3, 6))
         self.mode = tk.StringVar(value="reencode")
-        for val, key in (("direct", "direct"), ("post", "post"), ("reencode", "reencode")):
+        for val, key in (("reencode", "reencode"), ("post", "post"), ("direct", "direct")):
             rb = self._radio(mode_row, self.mode, val, key)
             rb.pack(anchor="w", pady=2)
             rb.bind("<Enter>", lambda _e, v=val: self._update_mode_desc(v))
