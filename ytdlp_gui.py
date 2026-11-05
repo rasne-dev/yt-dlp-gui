@@ -1,6 +1,8 @@
 import os
 import base64
+import json
 import locale
+import urllib.request
 import re
 import shutil
 import subprocess
@@ -12,7 +14,8 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 
-__version__ = "1.0.5"
+__version__ = "1.0.6"
+GITHUB_REPO = "rasne-dev/yt-dlp-gui"
 BG      = "#1e2029"
 SURF    = "#2a2d3a"
 SURF_2  = "#353848"
@@ -118,7 +121,14 @@ I18N = {
         "preview_step_start": "Başlangıç karesi indiriliyor… (en fazla {}sn)",
         "preview_step_end": "Bitiş karesi indiriliyor… (en fazla {}sn)",
         "preview_timeout": "Zaman aşımı — site/ağ yanıt vermedi.",
-        "update_ytdlp": "yt-dlp Güncelle",
+        "update_all": "Güncellemeleri Denetle",
+        "checking_updates": "Güncellemeler denetleniyor…",
+        "gui_update_found": "yt-dlp GUI için yeni bir sürüm ({}) mevcut.\nŞimdi indirilip güncellensin mi?",
+        "gui_downloading": "Yeni GUI sürümü indiriliyor…",
+        "is_up_to_date": "güncel",
+        "gui_updated_restart": "GUI güncellendi, yeniden başlatılıyor…",
+        "ytdlp_updating": "yt-dlp motoru güncelleniyor…",
+        "all_updated": "Tüm bileşenler güncel!",
         "updating_ytdlp": "yt-dlp güncelleniyor…",
         "update_success": "yt-dlp başarıyla güncellendi.",
         "update_failed": "yt-dlp güncellemesi başarısız oldu.",
@@ -206,7 +216,14 @@ I18N = {
         "preview_step_start": "Fetching start frame… (up to {}s)",
         "preview_step_end": "Fetching end frame… (up to {}s)",
         "preview_timeout": "Timed out — site/network did not respond.",
-        "update_ytdlp": "Update yt-dlp",
+        "update_all": "Check for Updates",
+        "checking_updates": "Checking for updates…",
+        "gui_update_found": "A new version of yt-dlp GUI ({}) is available.\nDownload and update now?",
+        "gui_downloading": "Downloading new GUI version…",
+        "is_up_to_date": "is up to date",
+        "gui_updated_restart": "GUI updated, restarting…",
+        "ytdlp_updating": "Updating yt-dlp engine…",
+        "all_updated": "All components are up to date!",
         "updating_ytdlp": "Updating yt-dlp…",
         "update_success": "yt-dlp updated successfully.",
         "update_failed": "yt-dlp update failed.",
@@ -489,6 +506,11 @@ class TimelineWidget(tk.Canvas):
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
+        if getattr(sys, "frozen", False):
+            old_exe = sys.executable + ".old"
+            if os.path.exists(old_exe):
+                try: os.remove(old_exe)
+                except OSError: pass
         self.lang           = tk.StringVar(value="tr")
         self._proc          = None
         self._canceling     = False
@@ -536,7 +558,7 @@ class App(tk.Tk):
 
         lang_f = tk.Frame(hdr, bg=BG)
         lang_f.pack(side="right")
-        self.update_btn = self._btn(lang_f, "update_ytdlp", self._update_ytdlp, small=True)
+        self.update_btn = self._btn(lang_f, "update_all", self._update_all, small=True)
         self.update_btn.pack(side="left", padx=(0, 10))
         self.lang_lbl = tk.Label(lang_f, font=FNSM, bg=BG, fg=DIM)
         self.lang_lbl.pack(side="left", padx=(0, 4))
@@ -1655,17 +1677,97 @@ class App(tk.Tk):
             self._log(f"✔  yt-dlp{ver} {self.t('deps_ready')}", GREEN)
             self._set_status(self.t("ready"), DIM)
 
-    def _update_ytdlp(self):
+    def _update_all(self):
         ytdlp = find_exe("yt-dlp")
-        if not ytdlp:
-            self._log(f"✖  yt-dlp {self.t('not_found')}", RED)
-            return
-
         self.update_btn.config(state="disabled")
-        self._set_status(self.t("updating_ytdlp"), ACCENT)
-        self._log(f"▶  {self.t('updating_ytdlp')}", ACCENT)
+        self._set_status(self.t("checking_updates"), ACCENT)
+        self._log(f"\n▶  {self.t('checking_updates')}", ACCENT)
 
         def worker():
+            # ── 1. Aşama: GUI Uygulama Güncellemesi (GitHub Releases) ──
+            try:
+                api_url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+                req = urllib.request.Request(api_url, headers={"User-Agent": "yt-dlp-gui-updater"})
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    rel_data = json.loads(resp.read().decode("utf-8"))
+                remote_tag = rel_data.get("tag_name", "")
+
+                def parse_ver(v):
+                    return [int(x) for x in re.findall(r"\d+", v)]
+
+                if parse_ver(remote_tag) > parse_ver(__version__):
+                    exe_asset = None
+                    for asset in rel_data.get("assets", []):
+                        if asset.get("name", "").lower().endswith(".exe"):
+                            exe_asset = asset
+                            break
+
+                    if exe_asset and getattr(sys, "frozen", False):
+                        download_url = exe_asset.get("browser_download_url")
+                        msg = self.t("gui_update_found").format(remote_tag)
+
+                        user_accepted = []
+                        event = threading.Event()
+                        def ask():
+                            ans = messagebox.askyesno(self.t("update_all"), msg)
+                            user_accepted.append(ans)
+                            event.set()
+                        self.after(0, ask)
+                        event.wait()
+
+                        if user_accepted and user_accepted[0]:
+                            self.after(0, self._set_status, self.t("gui_downloading"), ACCENT)
+                            self.after(0, self._log, f"⬇  {self.t('gui_downloading')}", ACCENT)
+
+                            app_dir = os.path.dirname(os.path.abspath(sys.executable))
+                            new_path = os.path.join(app_dir, "ytdlp_gui_new.exe")
+
+                            req_dl = urllib.request.Request(download_url, headers={"User-Agent": "yt-dlp-gui-updater"})
+                            with urllib.request.urlopen(req_dl, timeout=60) as dl_resp, open(new_path, "wb") as f_out:
+                                total_size = int(dl_resp.headers.get("Content-Length", 0))
+                                dled = 0
+                                chunk_size = 65536
+                                while True:
+                                    chunk = dl_resp.read(chunk_size)
+                                    if not chunk:
+                                        break
+                                    f_out.write(chunk)
+                                    dled += len(chunk)
+                                    if total_size > 0:
+                                        pct = int((dled / total_size) * 100)
+                                        self.after(0, self.progress.set, pct)
+                                        self.after(0, self._set_status, f"{self.t('gui_downloading')} %{pct}", ACCENT)
+
+                            self.after(0, self.progress.set, 100)
+                            self.after(0, self._log, f"✔  {self.t('gui_updated_restart')}", GREEN)
+
+                            old_path = sys.executable + ".old"
+                            if os.path.exists(old_path):
+                                try: os.remove(old_path)
+                                except OSError: pass
+
+                            os.rename(sys.executable, old_path)
+                            os.rename(new_path, sys.executable)
+
+                            subprocess.Popen([sys.executable])
+                            self.after(500, self.destroy)
+                            return
+                    elif exe_asset and not getattr(sys, "frozen", False):
+                        self.after(0, self._log, f"💡  GUI için yeni sürüm ({remote_tag}) mevcut. Kaynak koddan çalıştığınız için 'git pull' ile güncelleyebilirsiniz.", ACCENT)
+                else:
+                    self.after(0, self._log, f"✔  yt-dlp GUI {self.t('is_up_to_date')} ({__version__})", GREEN)
+            except Exception as e:
+                self.after(0, self._log, f"⚠  GUI güncelleme kontrolü: {e}", ORANGE)
+
+            # ── 2. Aşama: Ana Motor (yt-dlp) Güncellemesi ──
+            if not ytdlp:
+                self.after(0, self._log, f"✖  yt-dlp {self.t('not_found')}", RED)
+                self.after(0, lambda: self.update_btn.config(state="normal"))
+                return
+
+            self.after(0, self._set_status, self.t("ytdlp_updating"), ACCENT)
+            self.after(0, self._log, f"▶  {self.t('ytdlp_updating')}", ACCENT)
+
             try:
                 proc = subprocess.Popen(
                     [ytdlp, "-U"],
@@ -1683,7 +1785,7 @@ class App(tk.Tk):
                 proc.wait()
                 if proc.returncode == 0:
                     self.after(0, self._log, f"✔  {self.t('update_success')}", GREEN)
-                    self.after(0, self._set_status, self.t("ready"), DIM)
+                    self.after(0, self._set_status, self.t("all_updated"), GREEN)
                 else:
                     self.after(0, self._log, f"✖  {self.t('update_failed')}", RED)
                     self.after(0, self._set_status, self.t("error"), RED)
