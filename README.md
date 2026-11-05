@@ -105,8 +105,6 @@ python3 -m pip install -U yt-dlp
 python ytdlp_gui.py
 ```
 
-Or double-click `baslat.bat` on Windows.
-
 ## Run the Ready EXE
 
 If you downloaded a ready-to-use package, open the `dist` folder and run:
@@ -121,22 +119,20 @@ Some packages may include `yt-dlp.exe` and `ffmpeg.exe` next to `ytdlp_gui.exe`.
 
 ### Windows Smart App Control Warning
 
-If `dist/ytdlp_gui.exe` fails to open on Windows 11 with the warning *"Smart App Control blocked an app that may be unsafe"*, it is because locally compiled or open-source executables do not have an expensive commercial digital code-signing certificate.
+If `dist/ytdlp_gui.exe` fails to open or triggers `[WinError 4551] Application Control policy blocked this file`, Windows 11's Smart App Control is blocking unsigned executables or bundled engines (`yt-dlp.exe`, `ffmpeg.exe`).
 
 **Solutions:**
 
-1. **Step 1 (Run via Terminal / Python - Recommended):**  
-   Running the app directly completely bypasses this executable filter.
-   - Run in terminal:
+1. **Step 1 (Disable Smart App Control - Recommended):**  
+   - Open the **Start Menu**, search for **Smart App Control** (Windows Security > App & browser control > Smart App Control settings).
+   - Set the option to **Off**. This restores standard Windows behavior and allows `dist/ytdlp_gui.exe` and its tools to run smoothly.
+
+2. **Step 2 (Run via Terminal / Python):**  
+   - Open terminal in the project directory and run:
      ```bash
      python ytdlp_gui.py
      ```
-   - Or simply double-click the **`baslat.bat`** file in the project directory.
-
-2. **Step 2 (Disable Smart App Control):**  
-   If you prefer launching the standalone `.exe` directly:
-   - Open the **Start Menu**, search for **Smart App Control** (Windows Security > App & browser control).
-   - Set it to **Off**.
+   *(Ensure `yt-dlp` and `ffmpeg` are installed globally via `pip` and `winget` so system commands are accessible).*
 
 ## Build an EXE
 
@@ -310,8 +306,6 @@ python3 -m pip install -U yt-dlp
 python ytdlp_gui.py
 ```
 
-Veya Windows'ta doğrudan `baslat.bat` dosyasına çift tıklayabilirsiniz.
-
 ## Hazır EXE ile Çalıştırma
 
 Hazır paket indirdiyseniz `dist` klasörünü açıp şu dosyayı çalıştırın:
@@ -326,22 +320,22 @@ Bazı paketlerde `ytdlp_gui.exe` yanında `yt-dlp.exe` ve `ffmpeg.exe` dosyalar�
 
 ### Windows Akıllı Uygulama Denetimi (Smart App Control) Engeli
 
-Windows 11'de `dist/ytdlp_gui.exe` dosyası açılmıyor ve *"Akıllı Uygulama Denetimi, güvenli olmayabilecek bir uygulamayı engelledi"* uyarısı veriyorsa; bu durum yerel derlenen dosyanın ticari bir kod imzalama sertifikasına sahip olmamasından kaynaklanır.
+Windows 11'de `dist/ytdlp_gui.exe` dosyası açılmıyor veya uygulama içerisinde *"Hata: [WinError 4551] Uygulama Denetimi ilkesi bu dosyayı engelledi"* uyarısı veriyorsa; bu durum Akıllı Uygulama Denetimi'nin imzasız yerel `.exe` ve paketli motor dosyalarını (`yt-dlp.exe`, `ffmpeg.exe`) engellemesinden kaynaklanır.
 
-**Çözüm Yolları:**
+**Çözüm Adımları:**
 
-1. **Adım (Terminalden veya BAT ile Çalıştırma - Önerilen):**  
-   Uygulamayı doğrudan kaynak kodundan çalıştırmak güvenlik engeline takılmaz.
+1. **Adım (Akıllı Uygulama Denetimi'ni Kapatma - Kesin Çözüm):**  
+   Uygulamanın ve motorlarının sorunsuz çalışabilmesi için denetimi kapatabilirsiniz:
+   - **Başlat** menüsüne **"Akıllı Uygulama Denetimi"** (Windows Güvenliği > Uygulama ve tarayıcı denetimi > Akıllı Uygulama Denetimi ayarları) yazıp açın.
+   - Durumu **"Kapalı"** konuma getirin.
+
+2. **Adım (Terminalden / Python ile Çalıştırma):**  
+   Uygulamayı doğrudan kaynak kodundan çalıştırmak için:
    - Terminal veya Komut İstemi'nden:
      ```bash
      python ytdlp_gui.py
      ```
-   - Veya ana dizindeki **`baslat.bat`** dosyasına çift tıklayarak doğrudan açabilirsiniz.
-
-2. **Adım (Akıllı Uygulama Denetimi'ni Kapatma):**  
-   `.exe` dosyasını doğrudan çift tıklayarak kullanmaya devam etmek isterseniz bu denetimi devre dışı bırakabilirsiniz:
-   - **Başlat** menüsüne **"Akıllı Uygulama Denetimi"** (Windows Güvenliği > Uygulama ve tarayıcı denetimi > Akıllı Uygulama Denetimi ayarları) yazıp açın.
-   - Durumu **"Kapalı"** konuma getirin.
+   *(Not: yt-dlp ve ffmpeg motorlarının da engellenmemesi için `pip install -U yt-dlp` ve `winget install Gyan.FFmpeg` ile sistem geneline kurulu olduğundan emin olun).*
 
 ## EXE Oluşturma
 
